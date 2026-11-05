@@ -1,0 +1,22 @@
+{
+  "name": "دزدگیر گوشی",
+  "short_name": "دزدگیر",
+  "description": "دزدگیر هوشمند گوشی با اثر انگشت و سنسور حرکت",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#151515",
+  "theme_color": "#151515",
+  "categories": ["utilities", "security"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
