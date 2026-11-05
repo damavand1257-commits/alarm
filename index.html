@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>دزدگیر گوشی</title>
+
+<!-- ============ PWA ============ -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#151515">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="دزدگیر">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<!-- ============================== -->
+
+<style>
+body {
+    background: #151515;
+    color: white;
+    font-family: sans-serif;
+    text-align: center;
+    padding: 25px 12px;
+    -webkit-tap-highlight-color: transparent;
+}
+h1 { color: #ff3333; }
+button, input {
+    font-size: 18px;
+    padding: 12px;
+    margin: 8px;
+    border-radius: 8px;
+}
+button { border: none; background: #d71920; color: white; }
+#status { margin: 25px; font-size: 20px; color: #00ff88; }
+label.bio {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 16px; color: #cfcfcf; margin: 10px 0; cursor: pointer;
+}
+label.bio input {
+    width: auto; transform: scale(1.4); margin: 0; accent-color: #00c853;
+}
+#bioInfo { font-size: 13px; color: #9a9a9a; margin-top: 24px; line-height: 1.9; }
+</style>
+</head>
+
+<body>
+
+<h1>🚨 دزدگیر گوشی 🚨</h1>
+
+<p>رمز خاموش کردن را تعیین کن:</p>
+
+<input id="password" type="password" placeholder="مثلاً 1234" inputmode="numeric">
+
+<br>
+
+<label class="bio">
+    <input id="useBiometric" type="checkbox" checked>
+    خاموش کردن با اثر انگشت / چهره
+</label>
+
+<br>
+
+<button id="activate">فعال‌سازی دزدگیر</button>
+<button id="deactivate">خاموش کردن دزدگیر</button>
+
+<div id="status">دزدگیر خاموش است</div>
+
+<div id="bioInfo"></div>
+
+<script>
+/* ========== دزدگیر ========== */
+let armed = false;
+let alarm = false;
+let audioContext = null;
+let oscillator = null;
+let gainNode = null;
+let lastMotion = 0;
+let lastTouch = 0;
+let secret = "";
+let baseline = null;
+
+const status = document.getElementById("status");
+const bioInfo = document.getElementById("bioInfo");
+const bioToggle = document.getElementById("useBiometric");
+
+function startAlarm() {
+    if (!armed || alarm) return;
+    alarm = true;
+    status.textContent = "🚨 هشدار! گوشی دست‌کاری شده است!";
+    status.style.color = "#ff3333";
+    try {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext.resume();
+        oscillator = audioContext.createOscillator();
+        gainNode = audioContext.createGain();
+        oscillator.type = "square";
+        oscillator.frequency.value = 1000;
+        gainNode.gain.value = 0.25;
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.start();
+        let high = false;
+        window.alarmTimer = setInterval(() => {
+            if (!oscillator || !audioContext) return;
+            high = !high;
+            oscillator.frequency.setValueAtTime(high ? 1500 : 800, audioContext.currentTime);
+        }, 300);
+    } catch (e) {
+        status.textContent = "هشدار فعال شد؛ مرورگر اجازه پخش صدا نداد.";
+    }
+}
+
+function stopAlarm() {
+    alarm = false;
+    if (window.alarmTimer) { clearInterval(window.alarmTimer); window.alarmTimer = null; }
+    try {
+        if (oscillator) { oscillator.stop(); oscillator.disconnect(); oscillator = null; }
+        if (gainNode) { gainNode.disconnect(); gainNode = null; }
+    } catch (e) {}
+    status.textContent = armed ? "دزدگیر فعال است" : "دزدگیر خاموش است";
+    status.style.color = "#00ff88";
+}
+
+/* ========== بیومتریک ========== */
+const CRED_KEY = "alarmCredId";
+function b64FromBuf(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+}
+function bufFromB64(str) {
+    const bin = atob(str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+}
+async function biometricAvailable() {
+    if (!window.PublicKeyCredential) return false;
+    if (location.protocol === "file:") return false;
+    try {
+        return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    } catch { return false; }
+}
+async function registerBiometric() {
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const userId = crypto.getRandomValues(new Uint8Array(16));
+    const cred = await navigator.credentials.create({
+        publicKey: {
+            challenge,
+            rp: { name: "دزدگیر گوشی" },
+            user: { id: userId, name: "alarm-user", displayName: "کاربر دزدگیر" },
+            pubKeyCredParams: [
+                { type: "public-key", alg: -7 },
+                { type: "public-key", alg: -257 }
+            ],
+            authenticatorSelection: {
+                authenticatorAttachment: "platform",
+                userVerification: "required",
+                residentKey: "preferred"
+            },
+            timeout: 60000,
+            attestation: "none"
+        }
+    });
+    if (!cred) throw new Error("ثبت اثر انگشت انجام نشد");
+    localStorage.setItem(CRED_KEY, b64FromBuf(cred.rawId));
+}
+async function verifyBiometric() {
+    const stored = localStorage.getItem(CRED_KEY);
+    if (!stored) return false;
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const assertion = await navigator.credentials.get({
+        publicKey: {
+            challenge,
+            allowCredentials: [{ type: "public-key", id: bufFromB64(stored), transports: ["internal"] }],
+            userVerification: "required",
+            timeout: 60000
+        }
+    });
+    return !!assertion;
+}
+
+/* ========== فعال/خاموش ========== */
+async function activateAlarm() {
+    secret = document.getElementById("password").value;
+    if (!secret && !bioToggle.checked) {
+        alert("ابتدا یک رمز وارد کن یا بیومتریک را فعال کن.");
+        return;
+    }
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        await audioContext.resume();
+        const t = audioContext.createOscillator();
+        const g = audioContext.createGain();
+        g.gain.value = 0;
+        t.connect(g); g.connect(audioContext.destination);
+        t.start(); t.stop(audioContext.currentTime + 0.05);
+    } catch (e) {}
+    if (typeof DeviceMotionEvent !== "undefined" &&
+        typeof DeviceMotionEvent.requestPermission === "function") {
+        try {
+            const p = await DeviceMotionEvent.requestPermission();
+            if (p !== "granted") alert("اجازه حسگر حرکتی داده نشد؛ تشخیص حرکت ممکن نیست.");
+        } catch (e) {}
+    }
+    if (bioToggle.checked && await biometricAvailable()) {
+        if (!localStorage.getItem(CRED_KEY)) {
+            try {
+                await registerBiometric();
+                status.textContent = "✅ اثر انگشت/چهره ثبت شد...";
+            } catch (err) {
+                console.warn(err);
+                alert("ثبت اثر انگشت/چهره ناموفق بود.\nبا رمز عبور ادامه می‌دهید.");
+            }
+        }
+    }
+    armed = true;
+    alarm = false;
+    baseline = null;
+    lastMotion = 0;
+    lastTouch = Date.now();
+    status.textContent = "دزدگیر فعال است؛ گوشی را آرام روی میز بگذار.";
+    setTimeout(() => {
+        if (armed && !alarm) status.textContent = "🔒 دزدگیر آماده است!";
+    }, 5000);
+}
+
+function disarmSuccess() {
+    armed = false;
+    stopAlarm();
+    status.textContent = "دزدگیر خاموش شد.";
+}
+
+async function deactivateAlarm() {
+    const hasBio = !!localStorage.getItem(CRED_KEY) && await biometricAvailable();
+    if (hasBio) {
+        try {
+            const ok = await verifyBiometric();
+            if (ok) { disarmSuccess(); return; }
+        } catch (err) { console.warn("biometric failed:", err); }
+    }
+    const entered = prompt("رمز خاموش کردن دزدگیر را وارد کن:");
+    if (entered === secret) disarmSuccess();
+    else {
+        alert("رمز اشتباه است!");
+        if (armed) startAlarm();
+    }
+}
+
+document.getElementById("activate").addEventListener("click", activateAlarm);
+document.getElementById("deactivate").addEventListener("click", deactivateAlarm);
+
+/* ========== حسگرها ========== */
+window.addEventListener("devicemotion", event => {
+    if (!armed || alarm) return;
+    const a = event.accelerationIncludingGravity;
+    if (!a || a.x == null || a.y == null || a.z == null) return;
+    const magnitude = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    if (baseline === null) { baseline = magnitude; return; }
+    const change = Math.abs(magnitude - baseline);
+    baseline = baseline * 0.8 + magnitude * 0.2;
+    if (change > 2.5 && Date.now() - lastMotion > 1200) {
+        lastMotion = Date.now();
+        startAlarm();
+    }
+});
+
+document.addEventListener("touchstart", () => {
+    if (!armed || alarm) return;
+    if (Date.now() - lastTouch < 5000) return;
+    startAlarm();
+}, { passive: true });
+
+/* ========== بررسی اولیه ========== */
+(async () => {
+    if (!window.PublicKeyCredential) {
+        bioInfo.textContent = "⚠️ این مرورگر از اثر انگشت/چهره پشتیبانی نمی‌کند؛ رمز عبور استفاده می‌شود.";
+        bioToggle.checked = false; bioToggle.disabled = true; return;
+    }
+    if (location.protocol === "file:") {
+        bioInfo.textContent = "⚠️ برای اثر انگشت، صفحه باید روی HTTPS یا localhost اجرا شود. الان رمز عبور جایگزین است.";
+        bioToggle.checked = false; bioToggle.disabled = true; return;
+    }
+    try {
+        const ok = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (!ok) {
+            bioInfo.textContent = "ℹ️ اثر انگشت/چهره روی این دستگاه در دسترس نیست؛ رمز عبور استفاده می‌شود.";
+            bioToggle.checked = false; bioToggle.disabled = true;
+        } else {
+            bioInfo.textContent = "✅ اثر انگشت/چهره در دسترس است. با اولین فعال‌سازی، از شما ثبت می‌شود.";
+        }
+    } catch {
+        bioInfo.textContent = "⚠️ عدم امکان بررسی اثر انگشت/چهره.";
+    }
+})();
+
+/* ========== ثبت Service Worker ========== */
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW:', err));
+    });
+}
+</script>
+</body>
+</html>
